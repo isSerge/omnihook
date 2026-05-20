@@ -66,14 +66,13 @@ impl WebhookClient {
         &self,
         secret: &str,
         payload: &serde_json::Value,
+        timestamp: i64,
     ) -> Result<(String, String), OmnihookError> {
         if secret.is_empty() {
             return Err(OmnihookError::NotifyFailed(
                 "Invalid secret: cannot be empty.".to_string(),
             ));
         }
-
-        let timestamp = Utc::now().timestamp_millis();
 
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
             .map_err(|e| OmnihookError::ConfigError(format!("Invalid secret: {e}")))?;
@@ -109,13 +108,10 @@ impl WebhookClient {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static("application/json"),
-        );
 
         if let Some(secret) = &self.secret {
-            let (signature, timestamp) = self.sign_payload(secret, payload)?;
+            let timestamp = Utc::now().timestamp_millis();
+            let (signature, timestamp_str) = self.sign_payload(secret, payload, timestamp)?;
 
             headers.insert(
                 HeaderName::from_static("x-signature"),
@@ -125,7 +121,7 @@ impl WebhookClient {
             );
             headers.insert(
                 HeaderName::from_static("x-timestamp"),
-                HeaderValue::from_str(&timestamp).map_err(|e| {
+                HeaderValue::from_str(&timestamp_str).map_err(|e| {
                     OmnihookError::NotifyFailed(format!("Invalid timestamp value: {e}"))
                 })?,
             );
@@ -211,16 +207,19 @@ mod tests {
     fn test_sign_request() {
         let action = create_test_action("https://webhook.example.com", Some("test-secret"), None);
         let payload = json!({ "title": "Test Title", "body": "Test message" });
-        let (signature, timestamp) = action.sign_payload("test-secret", &payload).unwrap();
+        let timestamp = 123456789;
+        let (signature, timestamp_str) = action
+            .sign_payload("test-secret", &payload, timestamp)
+            .unwrap();
         assert!(!signature.is_empty());
-        assert!(!timestamp.is_empty());
+        assert_eq!(timestamp_str, "123456789");
     }
 
     #[test]
     fn test_sign_request_fails_empty_secret() {
         let action = create_test_action("https://webhook.example.com", None, None);
         let payload = json!({ "title": "Test Title", "body": "Test message" });
-        let error = action.sign_payload("", &payload).unwrap_err();
+        let error = action.sign_payload("", &payload, 123).unwrap_err();
         assert!(matches!(error, OmnihookError::NotifyFailed(_)));
     }
 
@@ -326,20 +325,17 @@ mod tests {
         );
         mock.assert();
     }
-
     #[test]
     fn test_sign_request_validation() {
         let action = create_test_action("https://webhook.example.com", Some("test-secret"), None);
-        let (signature, timestamp) = action
-            .sign_payload("test-secret", &create_test_payload())
+        let timestamp = 123456789;
+        let (signature, timestamp_str) = action
+            .sign_payload("test-secret", &create_test_payload(), timestamp)
             .unwrap();
         assert!(
             hex::decode(&signature).is_ok(),
             "Signature should be valid hex"
         );
-        assert!(
-            timestamp.parse::<i64>().is_ok(),
-            "Timestamp should be valid i64"
-        );
+        assert_eq!(timestamp_str, "123456789");
     }
 }
