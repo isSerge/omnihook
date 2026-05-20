@@ -1,6 +1,6 @@
 //! Webhook HTTP client with optional HMAC signing.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
@@ -19,13 +19,18 @@ type HmacSha256 = Hmac<Sha256>;
 /// Configuration for a webhook request.
 #[derive(Clone)]
 pub struct WebhookConfig {
+    /// The webhook URL to send requests to.
     pub url: Url,
+    /// Optional URL query parameters to include in the request.
     pub url_params: Option<HashMap<String, String>>,
-    pub title: String,
-    pub body_template: String,
+    /// The HTTP method to use (default: POST).
     pub method: Option<String>,
+    /// Optional secret for HMAC signing of the payload.
     pub secret: Option<String>,
+    /// Optional custom headers to include in the request.
     pub headers: Option<HashMap<String, String>>,
+    /// Optional timeout for the HTTP request. If not set, the default timeout of the HTTP client will be used.
+    pub timeout: Option<Duration>,
 }
 
 /// HTTP client for sending webhook notifications with optional HMAC signing.
@@ -34,9 +39,10 @@ pub struct WebhookClient {
     pub url: Url,
     pub url_params: Option<HashMap<String, String>>,
     pub client: Arc<ClientWithMiddleware>,
-    pub method: Option<String>,
+    pub method: String,
     pub secret: Option<String>,
     pub headers: Option<HashMap<String, String>>,
+    pub timeout: Option<Duration>,
 }
 
 impl WebhookClient {
@@ -54,9 +60,10 @@ impl WebhookClient {
             url: config.url,
             url_params: config.url_params,
             client: http_client,
-            method: Some(config.method.unwrap_or("POST".to_string())),
+            method: config.method.unwrap_or_else(|| "POST".to_string()),
             secret: config.secret,
             headers: Some(headers),
+            timeout: config.timeout,
         })
     }
 
@@ -101,11 +108,7 @@ impl WebhookClient {
             url.query_pairs_mut().extend_pairs(params);
         }
 
-        let method = if let Some(ref m) = self.method {
-            Method::from_bytes(m.as_bytes()).unwrap_or(Method::POST)
-        } else {
-            Method::POST
-        };
+        let method = Method::from_bytes(self.method.as_bytes()).unwrap_or(Method::POST);
 
         let mut headers = HeaderMap::new();
 
@@ -148,13 +151,13 @@ impl WebhookClient {
             headers.insert("Idempotency-Key", header_val);
         }
 
-        let response = self
-            .client
-            .request(method, url.as_str())
-            .headers(headers)
-            .json(payload)
-            .send()
-            .await?;
+        let mut request = self.client.request(method, url.as_str()).headers(headers);
+
+        if let Some(timeout) = self.timeout {
+            request = request.timeout(timeout);
+        }
+
+        let response = request.json(payload).send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -190,11 +193,10 @@ mod tests {
         let config = WebhookConfig {
             url: Url::parse(url).unwrap(),
             url_params: None,
-            title: "Alert".to_string(),
-            body_template: "Test message".to_string(),
             method: Some("POST".to_string()),
             secret: secret.map(|s| s.to_string()),
             headers,
+            timeout: None,
         };
         WebhookClient::new(config, http_client).unwrap()
     }

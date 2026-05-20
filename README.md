@@ -50,11 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = WebhookConfig {
         url: Url::parse("https://hooks.slack.com/services/T123/B123/X123")?,
         url_params: None,
-        title: "System Alert".to_string(),
-        body_template: "Service status changed to: {{status}}".to_string(),
         method: Some("POST".to_string()),
         secret: Some("your-signing-secret".to_string()),
         headers: None,
+        timeout: Some(std::time::Duration::from_secs(10)),
     };
 
     let client = WebhookClient::new(config, http_client)?;
