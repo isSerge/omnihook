@@ -17,7 +17,7 @@ use crate::error::OmnihookError;
 type HmacSha256 = Hmac<Sha256>;
 
 /// Configuration for a webhook request.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WebhookConfig {
     /// The webhook URL to send requests to.
     pub url: Url,
@@ -31,6 +31,50 @@ pub struct WebhookConfig {
     pub headers: Option<HashMap<String, String>>,
     /// Optional timeout for the HTTP request. If not set, the default timeout of the HTTP client will be used.
     pub timeout: Option<Duration>,
+}
+
+impl WebhookConfig {
+    /// Creates a new `WebhookConfig` with the given URL and default values.
+    pub fn new(url: Url) -> Self {
+        Self {
+            url,
+            url_params: None,
+            method: None,
+            secret: None,
+            headers: None,
+            timeout: None,
+        }
+    }
+
+    /// Sets the HTTP method for the webhook request.
+    pub fn with_method(mut self, method: impl Into<String>) -> Self {
+        self.method = Some(method.into());
+        self
+    }
+
+    /// Sets the secret for HMAC signing.
+    pub fn with_secret(mut self, secret: impl Into<String>) -> Self {
+        self.secret = Some(secret.into());
+        self
+    }
+
+    /// Sets the timeout for the webhook request.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Adds custom headers to the webhook request.
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    /// Adds URL query parameters to the webhook request.
+    pub fn with_url_params(mut self, params: HashMap<String, String>) -> Self {
+        self.url_params = Some(params);
+        self
+    }
 }
 
 /// HTTP client for sending webhook notifications with optional HMAC signing.
@@ -198,14 +242,16 @@ mod tests {
         headers: Option<HashMap<String, String>>,
     ) -> WebhookClient {
         let http_client = create_test_http_client();
-        let config = WebhookConfig {
-            url: Url::parse(url).unwrap(),
-            url_params: None,
-            method: Some("POST".to_string()),
-            secret: secret.map(|s| s.to_string()),
-            headers,
-            timeout: None,
-        };
+        let mut config = WebhookConfig::new(Url::parse(url).unwrap());
+
+        if let Some(s) = secret {
+            config = config.with_secret(s);
+        }
+
+        if let Some(h) = headers {
+            config = config.with_headers(h);
+        }
+
         WebhookClient::new(config, http_client).unwrap()
     }
 
@@ -226,7 +272,62 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_request_fails_empty_secret() {
+    fn test_webhook_config_builder() {
+        let url = Url::parse("https://example.com").unwrap();
+        let config = WebhookConfig::new(url.clone())
+            .with_method("PUT")
+            .with_secret("secret")
+            .with_timeout(Duration::from_secs(5))
+            .with_headers(HashMap::from([("X-Test".to_string(), "Value".to_string())]))
+            .with_url_params(HashMap::from([("param".to_string(), "val".to_string())]));
+
+        assert_eq!(config.url, url);
+        assert_eq!(config.method, Some("PUT".to_string()));
+        assert_eq!(config.secret, Some("secret".to_string()));
+        assert_eq!(config.timeout, Some(Duration::from_secs(5)));
+        assert_eq!(config.headers.unwrap().get("X-Test").unwrap(), "Value");
+        assert_eq!(config.url_params.unwrap().get("param").unwrap(), "val");
+    }
+
+    #[test]
+    fn test_invalid_http_method() {
+        let http_client = create_test_http_client();
+        let config = WebhookConfig::new(Url::parse("https://example.com").unwrap())
+            .with_method("INVALID METHOD");
+
+        let result = WebhookClient::new(config, http_client);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid HTTP method")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_url_params_inclusion() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .match_query(mockito::Matcher::UrlEncoded("foo".into(), "bar".into()))
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let http_client = create_test_http_client();
+        let config = WebhookConfig::new(Url::parse(&server.url()).unwrap())
+            .with_url_params(HashMap::from([("foo".to_string(), "bar".to_string())]));
+
+        let client = WebhookClient::new(config, http_client).unwrap();
+        let result = client.notify_json(&json!({"test": "data"}), None).await;
+
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
+    #[test]
+    fn test_sign_request_validation() {
         let action = create_test_action("https://webhook.example.com", None, None);
         let payload = json!({ "title": "Test Title", "body": "Test message" });
         let error = action.sign_payload("", &payload, 123).unwrap_err();
@@ -336,7 +437,7 @@ mod tests {
         mock.assert();
     }
     #[test]
-    fn test_sign_request_validation() {
+    fn test_sign_payload_validation() {
         let action = create_test_action("https://webhook.example.com", Some("test-secret"), None);
         let timestamp = 123456789;
         let (signature, timestamp_str) = action
