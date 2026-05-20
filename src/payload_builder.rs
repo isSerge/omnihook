@@ -3,6 +3,8 @@
 //! Traits and implementations for constructing channel-specific JSON payloads
 //! for Slack, Discord, Telegram, and generic webhooks.
 
+use std::sync::LazyLock;
+
 use regex::Regex;
 use serde_json::json;
 
@@ -15,6 +17,7 @@ pub trait WebhookPayloadBuilder: Send + Sync {
 /// A payload builder for Slack notifications.
 ///
 /// Creates a `blocks`-based section with mrkdwn-formatted text.
+#[derive(Default)]
 pub struct SlackPayloadBuilder;
 
 impl WebhookPayloadBuilder for SlackPayloadBuilder {
@@ -37,6 +40,7 @@ impl WebhookPayloadBuilder for SlackPayloadBuilder {
 /// A payload builder for Discord notifications.
 ///
 /// Creates a simple `content` field with markdown-formatted text.
+#[derive(Default)]
 pub struct DiscordPayloadBuilder;
 
 impl WebhookPayloadBuilder for DiscordPayloadBuilder {
@@ -67,14 +71,15 @@ impl TelegramPayloadBuilder {
             '!', '\\',
         ];
 
-        let re =
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(r"(?s)```.*?```|`[^`]*`|\*[^*]*\*|_[^_]*_|~[^~]*~|\[([^\]]+)\]\(([^)]+)\)")
-                .unwrap();
+                .unwrap()
+        });
 
         let mut out = String::with_capacity(text.len());
         let mut last = 0;
 
-        for caps in re.captures_iter(text) {
+        for caps in RE.captures_iter(text) {
             let mat = caps.get(0).unwrap();
 
             for c in text[last..mat.start()].chars() {
@@ -140,6 +145,7 @@ impl WebhookPayloadBuilder for TelegramPayloadBuilder {
 
 /// A payload builder for generic webhooks. Produces a simple `{title, body}`
 /// JSON object.
+#[derive(Default)]
 pub struct GenericWebhookPayloadBuilder;
 
 impl WebhookPayloadBuilder for GenericWebhookPayloadBuilder {
