@@ -108,11 +108,12 @@ impl WebhookClient {
         };
 
         if let Some(params) = &config.url_params
-            && params.is_empty() {
-                return Err(OmnihookError::ConfigError(
-                    "url_params cannot be empty if provided".to_string(),
-                ));
-            }
+            && params.is_empty()
+        {
+            return Err(OmnihookError::ConfigError(
+                "url_params cannot be empty if provided".to_string(),
+            ));
+        }
 
         Ok(Self {
             url: config.url,
