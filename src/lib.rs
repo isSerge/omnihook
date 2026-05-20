@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! `omnihook` — generic webhook client with HMAC signing and platform-specific
 //! payload builders for Slack, Discord, Telegram, and generic endpoints.
 
