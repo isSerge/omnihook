@@ -134,16 +134,16 @@ impl WebhookClient {
         timestamp: i64,
     ) -> Result<(String, String), OmnihookError> {
         if secret.is_empty() {
-            return Err(OmnihookError::NotifyFailed(
+            return Err(OmnihookError::SigningError(
                 "Invalid secret: cannot be empty.".to_string(),
             ));
         }
 
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-            .map_err(|e| OmnihookError::ConfigError(format!("Invalid secret: {e}")))?;
+            .map_err(|e| OmnihookError::SigningError(format!("Invalid secret: {e}")))?;
 
         let serialized_payload = serde_json::to_string(payload).map_err(|e| {
-            OmnihookError::InternalError(format!("Failed to serialize payload: {e}"))
+            OmnihookError::SerializationError(format!("Failed to serialize payload: {e}"))
         })?;
         let message = format!("{serialized_payload}{timestamp}");
         mac.update(message.as_bytes());
@@ -338,7 +338,7 @@ mod tests {
     fn test_sign_request_validation() {
         let payload = json!({ "title": "Test Title", "body": "Test message" });
         let error = WebhookClient::sign_payload("", &payload, 123).unwrap_err();
-        assert!(matches!(error, OmnihookError::NotifyFailed(_)));
+        assert!(matches!(error, OmnihookError::SigningError(_)));
     }
 
     #[tokio::test]
