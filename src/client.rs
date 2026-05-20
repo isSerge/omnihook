@@ -85,7 +85,7 @@ pub struct WebhookClient {
     client: Arc<ClientWithMiddleware>,
     method: Method,
     secret: Option<String>,
-    headers: Option<HashMap<String, String>>,
+    headers: HashMap<String, String>,
     timeout: Option<Duration>,
 }
 
@@ -112,7 +112,7 @@ impl WebhookClient {
             url_params: config.url_params,
             client: http_client,
             method,
-            headers: Some(headers),
+            headers,
             secret: config.secret,
             timeout: config.timeout,
         })
@@ -121,7 +121,6 @@ impl WebhookClient {
     /// Signs a JSON payload with HMAC-SHA256 and returns `(hex_signature,
     /// timestamp_ms)`.
     pub fn sign_payload(
-        &self,
         secret: &str,
         payload: &serde_json::Value,
         timestamp: i64,
@@ -163,7 +162,7 @@ impl WebhookClient {
 
         if let Some(secret) = &self.secret {
             let timestamp = Utc::now().timestamp_millis();
-            let (signature, timestamp_str) = self.sign_payload(secret, payload, timestamp)?;
+            let (signature, timestamp_str) = Self::sign_payload(secret, payload, timestamp)?;
 
             headers.insert(
                 HeaderName::from_static("x-signature"),
@@ -179,18 +178,14 @@ impl WebhookClient {
             );
         }
 
-        if let Some(headers_map) = &self.headers {
-            for (key, value) in headers_map {
-                let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
-                    OmnihookError::NotifyFailed(format!("Invalid header name: {key}: {e}"))
-                })?;
-                let header_value = HeaderValue::from_str(value).map_err(|e| {
-                    OmnihookError::NotifyFailed(format!(
-                        "Invalid header value for {key}: {value}: {e}"
-                    ))
-                })?;
-                headers.insert(header_name, header_value);
-            }
+        for (key, value) in &self.headers {
+            let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|e| {
+                OmnihookError::NotifyFailed(format!("Invalid header name: {key}: {e}"))
+            })?;
+            let header_value = HeaderValue::from_str(value).map_err(|e| {
+                OmnihookError::NotifyFailed(format!("Invalid header value for {key}: {value}: {e}"))
+            })?;
+            headers.insert(header_name, header_value);
         }
 
         if let Some(key) = idempotency_key {
@@ -202,7 +197,7 @@ impl WebhookClient {
 
         let mut request = self
             .client
-            .request(self.method.clone(), url.as_str())
+            .request(self.method.clone(), url)
             .headers(headers);
 
         if let Some(timeout) = self.timeout {
@@ -261,12 +256,10 @@ mod tests {
 
     #[test]
     fn test_sign_request() {
-        let action = create_test_action("https://webhook.example.com", Some("test-secret"), None);
         let payload = json!({ "title": "Test Title", "body": "Test message" });
         let timestamp = 123456789;
-        let (signature, timestamp_str) = action
-            .sign_payload("test-secret", &payload, timestamp)
-            .unwrap();
+        let (signature, timestamp_str) =
+            WebhookClient::sign_payload("test-secret", &payload, timestamp).unwrap();
         assert!(!signature.is_empty());
         assert_eq!(timestamp_str, "123456789");
     }
@@ -328,9 +321,8 @@ mod tests {
 
     #[test]
     fn test_sign_request_validation() {
-        let action = create_test_action("https://webhook.example.com", None, None);
         let payload = json!({ "title": "Test Title", "body": "Test message" });
-        let error = action.sign_payload("", &payload, 123).unwrap_err();
+        let error = WebhookClient::sign_payload("", &payload, 123).unwrap_err();
         assert!(matches!(error, OmnihookError::NotifyFailed(_)));
     }
 
@@ -438,11 +430,9 @@ mod tests {
     }
     #[test]
     fn test_sign_payload_validation() {
-        let action = create_test_action("https://webhook.example.com", Some("test-secret"), None);
         let timestamp = 123456789;
-        let (signature, timestamp_str) = action
-            .sign_payload("test-secret", &create_test_payload(), timestamp)
-            .unwrap();
+        let (signature, timestamp_str) =
+            WebhookClient::sign_payload("test-secret", &create_test_payload(), timestamp).unwrap();
         assert!(
             hex::decode(&signature).is_ok(),
             "Signature should be valid hex"
