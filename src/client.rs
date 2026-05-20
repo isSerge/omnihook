@@ -1,8 +1,11 @@
 //! Webhook HTTP client with optional HMAC signing.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
-use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
     Method,
@@ -160,7 +163,10 @@ impl WebhookClient {
     ) -> Result<(), OmnihookError> {
         // Sign the payload if a secret is configured
         let (signature, timestamp_str) = if let Some(secret) = &self.secret {
-            let timestamp = Utc::now().timestamp_millis();
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| OmnihookError::SigningError("Time went backwards".to_string()))?
+                .as_millis() as i64;
             let result = Self::sign_payload(secret, payload, timestamp)?;
             (Some(result.0), Some(result.1))
         } else {

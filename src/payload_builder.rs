@@ -17,6 +17,21 @@ pub trait WebhookPayloadBuilder: Send + Sync {
 /// A payload builder for Slack notifications.
 ///
 /// Creates a `blocks`-based section with mrkdwn-formatted text.
+///
+/// ### JSON Output
+/// ```json
+/// {
+///   "blocks": [
+///     {
+///       "type": "section",
+///       "text": {
+///         "type": "mrkdwn",
+///         "text": "*Title*\n\nBody message"
+///       }
+///     }
+///   ]
+/// }
+/// ```
 #[derive(Default)]
 pub struct SlackPayloadBuilder;
 
@@ -40,6 +55,13 @@ impl WebhookPayloadBuilder for SlackPayloadBuilder {
 /// A payload builder for Discord notifications.
 ///
 /// Creates a simple `content` field with markdown-formatted text.
+///
+/// ### JSON Output
+/// ```json
+/// {
+///   "content": "*Title*\n\nBody message"
+/// }
+/// ```
 #[derive(Default)]
 pub struct DiscordPayloadBuilder;
 
@@ -53,6 +75,19 @@ impl WebhookPayloadBuilder for DiscordPayloadBuilder {
 }
 
 /// A payload builder for Telegram notifications using MarkdownV2.
+///
+/// Requires a `chat_id` and optionally allows disabling web page previews.
+/// Automatically escapes special characters while preserving markdown entities.
+///
+/// ### JSON Output
+/// ```json
+/// {
+///   "chat_id": "12345678",
+///   "text": "*Title* \n\nBody message",
+///   "parse_mode": "MarkdownV2",
+///   "disable_web_page_preview": true
+/// }
+/// ```
 pub struct TelegramPayloadBuilder {
     /// The chat ID to send the message to.
     pub chat_id: String,
@@ -145,6 +180,14 @@ impl WebhookPayloadBuilder for TelegramPayloadBuilder {
 
 /// A payload builder for generic webhooks. Produces a simple `{title, body}`
 /// JSON object.
+///
+/// ### JSON Output
+/// ```json
+/// {
+///   "title": "Title",
+///   "body": "Body message"
+/// }
+/// ```
 #[derive(Default)]
 pub struct GenericWebhookPayloadBuilder;
 

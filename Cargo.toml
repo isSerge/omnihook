@@ -5,7 +5,6 @@ edition = "2024"
 description = "Generic webhook client with HMAC signing and platform-specific payload builders (Slack, Discord, Telegram)"
 
 [dependencies]
-chrono = { version = "0.4.41", features = ["serde"] }
 hex = "0.4.3"
 hmac = "0.13.0"
 regex = "1.11.1"
