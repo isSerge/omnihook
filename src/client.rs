@@ -36,13 +36,13 @@ pub struct WebhookConfig {
 /// HTTP client for sending webhook notifications with optional HMAC signing.
 #[derive(Debug)]
 pub struct WebhookClient {
-    pub url: Url,
-    pub url_params: Option<HashMap<String, String>>,
-    pub client: Arc<ClientWithMiddleware>,
-    pub method: String,
-    pub secret: Option<String>,
-    pub headers: Option<HashMap<String, String>>,
-    pub timeout: Option<Duration>,
+    url: Url,
+    url_params: Option<HashMap<String, String>>,
+    client: Arc<ClientWithMiddleware>,
+    method: Method,
+    secret: Option<String>,
+    headers: Option<HashMap<String, String>>,
+    timeout: Option<Duration>,
 }
 
 impl WebhookClient {
@@ -56,13 +56,20 @@ impl WebhookClient {
             headers.insert("Content-Type".to_string(), "application/json".to_string());
         }
 
+        let method = if let Some(m) = config.method {
+            Method::from_bytes(m.as_bytes())
+                .map_err(|e| OmnihookError::ConfigError(format!("Invalid HTTP method: {e}")))?
+        } else {
+            Method::POST
+        };
+
         Ok(Self {
             url: config.url,
             url_params: config.url_params,
             client: http_client,
-            method: config.method.unwrap_or_else(|| "POST".to_string()),
-            secret: config.secret,
+            method,
             headers: Some(headers),
+            secret: config.secret,
             timeout: config.timeout,
         })
     }
@@ -108,8 +115,6 @@ impl WebhookClient {
             url.query_pairs_mut().extend_pairs(params);
         }
 
-        let method = Method::from_bytes(self.method.as_bytes()).unwrap_or(Method::POST);
-
         let mut headers = HeaderMap::new();
 
         if let Some(secret) = &self.secret {
@@ -151,7 +156,10 @@ impl WebhookClient {
             headers.insert("Idempotency-Key", header_val);
         }
 
-        let mut request = self.client.request(method, url.as_str()).headers(headers);
+        let mut request = self
+            .client
+            .request(self.method.clone(), url.as_str())
+            .headers(headers);
 
         if let Some(timeout) = self.timeout {
             request = request.timeout(timeout);
