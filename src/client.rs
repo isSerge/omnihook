@@ -158,29 +158,36 @@ impl WebhookClient {
         payload: &serde_json::Value,
         idempotency_key: Option<&str>,
     ) -> Result<(), OmnihookError> {
+        // Sign the payload if a secret is configured
+        let (signature, timestamp_str) = if let Some(secret) = &self.secret {
+            let timestamp = Utc::now().timestamp_millis();
+            let result = Self::sign_payload(secret, payload, timestamp)?;
+            (Some(result.0), Some(result.1))
+        } else {
+            (None, None)
+        };
+
         let mut url = self.url.clone();
 
-        if let Some(params) = &self.url_params
-            && !params.is_empty()
-        {
+        if let Some(params) = &self.url_params {
             url.query_pairs_mut().extend_pairs(params);
         }
 
         let mut headers = HeaderMap::new();
 
-        if let Some(secret) = &self.secret {
-            let timestamp = Utc::now().timestamp_millis();
-            let (signature, timestamp_str) = Self::sign_payload(secret, payload, timestamp)?;
-
+        if let Some(sig) = signature {
             headers.insert(
                 HeaderName::from_static("x-signature"),
-                HeaderValue::from_str(&signature).map_err(|e| {
+                HeaderValue::from_str(&sig).map_err(|e| {
                     OmnihookError::NotifyFailed(format!("Invalid signature value: {e}"))
                 })?,
             );
+        }
+
+        if let Some(ts) = timestamp_str {
             headers.insert(
                 HeaderName::from_static("x-timestamp"),
-                HeaderValue::from_str(&timestamp_str).map_err(|e| {
+                HeaderValue::from_str(&ts).map_err(|e| {
                     OmnihookError::NotifyFailed(format!("Invalid timestamp value: {e}"))
                 })?,
             );
