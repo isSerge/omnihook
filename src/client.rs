@@ -73,9 +73,23 @@ impl WebhookConfig {
         self
     }
 
+    /// Adds a single custom header to the webhook request.
+    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let headers = self.headers.get_or_insert_with(HashMap::new);
+        headers.insert(key.into(), value.into());
+        self
+    }
+
     /// Adds URL query parameters to the webhook request.
     pub fn with_url_params(mut self, params: HashMap<String, String>) -> Self {
         self.url_params = Some(params);
+        self
+    }
+
+    /// Adds a single URL query parameter to the webhook request.
+    pub fn with_url_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let params = self.url_params.get_or_insert_with(HashMap::new);
+        params.insert(key.into(), value.into());
         self
     }
 }
@@ -292,15 +306,39 @@ mod tests {
             .with_method("PUT")
             .with_secret("secret")
             .with_timeout(Duration::from_secs(5))
-            .with_headers(HashMap::from([("X-Test".to_string(), "Value".to_string())]))
-            .with_url_params(HashMap::from([("param".to_string(), "val".to_string())]));
+            .with_header("X-Test", "Value")
+            .with_url_param("param", "val");
 
         assert_eq!(config.url, url);
         assert_eq!(config.method, Some("PUT".to_string()));
         assert_eq!(config.secret, Some("secret".to_string()));
         assert_eq!(config.timeout, Some(Duration::from_secs(5)));
-        assert_eq!(config.headers.unwrap().get("X-Test").unwrap(), "Value");
-        assert_eq!(config.url_params.unwrap().get("param").unwrap(), "val");
+        assert_eq!(
+            config.headers.as_ref().unwrap().get("X-Test").unwrap(),
+            "Value"
+        );
+        assert_eq!(
+            config.url_params.as_ref().unwrap().get("param").unwrap(),
+            "val"
+        );
+    }
+
+    #[test]
+    fn test_webhook_config_builder_append() {
+        let url = Url::parse("https://example.com").unwrap();
+        let config = WebhookConfig::new(url)
+            .with_header("X-1", "V1")
+            .with_header("X-2", "V2")
+            .with_url_param("p1", "v1")
+            .with_url_param("p2", "v2");
+
+        let headers = config.headers.unwrap();
+        assert_eq!(headers.get("X-1").unwrap(), "V1");
+        assert_eq!(headers.get("X-2").unwrap(), "V2");
+
+        let params = config.url_params.unwrap();
+        assert_eq!(params.get("p1").unwrap(), "v1");
+        assert_eq!(params.get("p2").unwrap(), "v2");
     }
 
     #[test]
