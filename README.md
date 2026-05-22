@@ -27,55 +27,79 @@ Add this to your `Cargo.toml`:
 omnihook = "0.1.0"
 ```
 
-## Quick Start
+## Usage
 
-### Basic Webhook Notification
+### Basic Example
 
 ```rust,no_run
-use omnihook::{WebhookClient, WebhookConfig, SlackPayloadBuilder, WebhookPayloadBuilder};
-use reqwest_middleware::ClientBuilder;
-use std::sync::Arc;
+use omnihook::{WebhookClient, WebhookConfig, SlackPayloadBuilder};
 use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Setup HTTP client with middleware support.
-    // You can easily add retries, logging, or caching here using reqwest-middleware.
-    let http_client = Arc::new(
-        ClientBuilder::new(reqwest::Client::new())
-            .build()
-    );
+    let url = Url::parse("https://hooks.slack.com/services/T000/B000/XXXX")?;
+    
+    // 1. Configure the webhook
+    let config = WebhookConfig::new(url);
 
-    // 2. Configure the webhook using the builder API
-    let config = WebhookConfig::new(Url::parse("https://hooks.slack.com/services/T123/B123/X123")?)
-        .with_method("POST")
-        .with_timeout(std::time::Duration::from_secs(10));
+    // 2. Build client using default HTTP settings
+    let client = config.build()?;
 
-    let client = WebhookClient::new(config, http_client)?;
-
-    // 3. Build platform-specific payload
+    // 3. Send notification
     let builder = SlackPayloadBuilder::default();
-    let payload = builder.build_payload("Critical Error", "The database is unreachable.");
-
-    // 4. Send notification
-    client.notify_json(&payload, None).await?;
+    client.notify("System Alert", "Database is down!", &builder).await?;
 
     Ok(())
 }
 ```
 
-## Middleware & Customization
+### Customizing HTTP Client (Middleware)
 
-Since `omnihook` uses `reqwest-middleware`, you have full control over the HTTP client's behavior. This makes it simple to add features like **exponential backoff retries** without any library-specific configuration:
+Since `omnihook` uses `reqwest-middleware`, you can add retries, logging, or caching. To do this, provide your own `Arc<ClientWithMiddleware>` to `WebhookClient::new`:
 
 ```rust,ignore
-// Example: Adding retries with reqwest-retry
-let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-let http_client = Arc::new(
-    ClientBuilder::new(reqwest::Client::new())
+use std::sync::Arc;
+use reqwest_middleware::ClientBuilder;
+use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
+use omnihook::{WebhookClient, WebhookConfig};
+use url::Url;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 1. Setup retry policy
+    let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
+    let http_client = ClientBuilder::new(reqwest::Client::new())
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
-        .build()
-);
+        .build();
+
+    // 2. Wrap in Arc and pass to client
+    let config = WebhookConfig::new(Url::parse("https://...")?);
+    let client = WebhookClient::new(config, Arc::new(http_client))?;
+
+    Ok(())
+}
+```
+
+## HMAC Signing & Security
+
+`omnihook` supports automatic payload signing using HMAC-SHA256. When a `secret` is provided in the configuration, every request will include `x-signature` and `x-timestamp` headers.
+
+```rust,no_run
+use omnihook::{WebhookClient, WebhookConfig, GenericWebhookPayloadBuilder};
+use url::Url;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = WebhookConfig::new(Url::parse("https://your-api.com/webhook")?)
+        .with_secret("top-secret-key"); // Enables automatic signing
+
+    let client = config.build()?;
+    
+    // This call will now automatically sign the payload
+    client.notify("Alert", "Something happened", &GenericWebhookPayloadBuilder::default()).await?;
+
+    Ok(())
+}
 ```
 
 ## Payload Builders
@@ -120,16 +144,6 @@ let builder = GenericWebhookPayloadBuilder::default();
 let payload = builder.build_payload("Alert", "Something happened");
 // Returns: { "title": "Alert", "body": "Something happened" }
 ```
-
-## HMAC Signing
-
-If a `secret` is provided in the `WebhookConfig`, `omnihook` can sign payloads:
-
-```rust,ignore
-let (signature, timestamp) = client.sign_payload("secret-key", &payload)?;
-```
-
-This generates an HMAC-SHA256 signature calculated from the JSON payload and a timestamp, which can be sent as headers to verify the authenticity of the webhook on the receiving end.
 
 ## License
 

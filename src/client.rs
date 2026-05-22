@@ -8,14 +8,14 @@ use std::{
 
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
-    Method,
+    Client, Method,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
-use reqwest_middleware::ClientWithMiddleware;
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use sha2::Sha256;
 use url::Url;
 
-use crate::error::OmnihookError;
+use crate::{error::OmnihookError, payload_builder::WebhookPayloadBuilder};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -92,6 +92,21 @@ impl WebhookConfig {
         params.insert(key.into(), value.into());
         self
     }
+
+    /// Builds a `WebhookClient` using a default HTTP client.
+    pub fn build(self) -> Result<WebhookClient, OmnihookError> {
+        WebhookClient::try_from(self)
+    }
+}
+
+impl TryFrom<WebhookConfig> for WebhookClient {
+    type Error = OmnihookError;
+
+    /// Creates a `WebhookClient` from a `WebhookConfig` using a default reqwest client.
+    fn try_from(config: WebhookConfig) -> Result<Self, Self::Error> {
+        let http_client = Arc::new(ClientBuilder::new(Client::new()).build());
+        Self::new(config, http_client)
+    }
 }
 
 /// HTTP client for sending webhook notifications with optional HMAC signing.
@@ -167,6 +182,17 @@ impl WebhookClient {
 
         let signature = hex::encode(mac.finalize().into_bytes());
         Ok((signature, timestamp.to_string()))
+    }
+
+    /// Builds a payload using the given builder and sends it.
+    pub async fn notify(
+        &self,
+        title: &str,
+        body: &str,
+        builder: &impl WebhookPayloadBuilder,
+    ) -> Result<(), OmnihookError> {
+        let payload = builder.build_payload(title, body);
+        self.notify_json(&payload, None).await
     }
 
     /// Sends a JSON payload to the configured webhook URL.
@@ -339,6 +365,14 @@ mod tests {
         let params = config.url_params.unwrap();
         assert_eq!(params.get("p1").unwrap(), "v1");
         assert_eq!(params.get("p2").unwrap(), "v2");
+    }
+
+    #[test]
+    fn test_webhook_client_default_build() {
+        let url = Url::parse("https://example.com").unwrap();
+        let config = WebhookConfig::new(url);
+        let client = config.build().unwrap();
+        assert_eq!(client.url.as_str(), "https://example.com/");
     }
 
     #[test]
