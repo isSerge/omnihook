@@ -153,8 +153,16 @@ impl WebhookClient {
         })
     }
 
-    /// Signs the payload bytes with HMAC-SHA256 and returns `(hex_signature,
+    /// Computes an HMAC-SHA256 signature and returns `(hex_signature,
     /// timestamp_ms)`.
+    ///
+    /// The HMAC message is the raw `payload_bytes` followed immediately by the
+    /// decimal string representation of `timestamp`, with no delimiter between
+    /// them. In other words, the signed message is:
+    ///
+    /// `payload_bytes || timestamp.to_string().as_bytes()`
+    ///
+    /// The returned `timestamp_ms` value is that decimal timestamp string.
     pub fn sign_payload(
         secret: &str,
         payload_bytes: &[u8],
