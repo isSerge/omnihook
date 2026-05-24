@@ -199,8 +199,12 @@ impl WebhookClient {
             let timestamp = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(|_| OmnihookError::SigningError("Time went backwards".to_string()))?
-                .as_millis() as i64;
-            let result = Self::sign_payload(secret, payload, timestamp)?;
+                .as_millis();
+
+            let timestamp_i64 = i64::try_from(timestamp)
+                .map_err(|_| OmnihookError::SigningError("Timestamp overflow".to_string()))?;
+
+            let result = Self::sign_payload(secret, payload, timestamp_i64)?;
             (Some(result.0), Some(result.1))
         } else {
             (None, None)
