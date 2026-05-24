@@ -315,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_request() {
+    fn test_sign_payload_basic() {
         let payload = json!({ "title": "Test Title", "body": "Test message" });
         let timestamp = 123456789;
         let (signature, timestamp_str) =
@@ -375,7 +375,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_url_params_inclusion() {
+    async fn test_notify_success_with_url_params() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/")
@@ -396,14 +396,14 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_request_validation() {
+    fn test_sign_payload_error_on_empty_secret() {
         let payload = json!({ "title": "Test Title", "body": "Test message" });
         let error = WebhookClient::sign_payload("", &payload, 123).unwrap_err();
         assert!(matches!(error, OmnihookError::SigningError(_)));
     }
 
     #[tokio::test]
-    async fn test_notify_failure() {
+    async fn test_notify_error_network() {
         let action = create_test_action("https://webhook.example.com", None, None);
         let payload = create_test_payload();
         let result = action.notify_json(&payload, None).await;
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notify_includes_signature_and_timestamp() {
+    async fn test_notify_success_with_signing_headers() {
         let mut server = mockito::Server::new_async().await;
         let mock: Mock = server
             .mock("POST", "/")
@@ -436,7 +436,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notify_with_invalid_header_name() {
+    async fn test_notify_error_invalid_header_name() {
         let server = mockito::Server::new_async().await;
         let invalid_headers =
             HashMap::from([("Invalid Header!@#".to_string(), "value".to_string())]);
@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notify_with_invalid_header_value() {
+    async fn test_notify_error_invalid_header_value() {
         let server = mockito::Server::new_async().await;
         let invalid_headers =
             HashMap::from([("X-Custom-Header".to_string(), "Invalid\nValue".to_string())]);
@@ -462,7 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_notify_with_valid_headers() {
+    async fn test_notify_success_with_custom_headers() {
         let mut server = mockito::Server::new_async().await;
         let valid_headers = HashMap::from([
             ("X-Custom-Header".to_string(), "valid-value".to_string()),
@@ -484,28 +484,8 @@ mod tests {
         );
         mock.assert();
     }
-
-    #[tokio::test]
-    async fn test_notify_signature_header_cases() {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("POST", "/")
-            .match_header("X-Signature", Matcher::Any)
-            .match_header("X-Timestamp", Matcher::Any)
-            .with_status(200)
-            .create_async()
-            .await;
-        let action = create_test_action(server.url().as_str(), Some("test-secret"), None);
-        assert!(
-            action
-                .notify_json(&create_test_payload(), None)
-                .await
-                .is_ok()
-        );
-        mock.assert();
-    }
     #[test]
-    fn test_sign_payload_validation() {
+    fn test_sign_payload_format() {
         let timestamp = 123456789;
         let (signature, timestamp_str) =
             WebhookClient::sign_payload("test-secret", &create_test_payload(), timestamp).unwrap();
