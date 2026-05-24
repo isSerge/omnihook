@@ -27,7 +27,7 @@ pub struct WebhookConfig {
     /// Optional URL query parameters to include in the request.
     url_params: Option<HashMap<String, String>>,
     /// The HTTP method to use (default: POST).
-    method: Option<String>,
+    method: Method,
     /// Optional secret for HMAC signing of the payload.
     secret: Option<String>,
     /// Optional custom headers to include in the request.
@@ -42,7 +42,7 @@ impl WebhookConfig {
         Self {
             url,
             url_params: None,
-            method: None,
+            method: Method::POST,
             secret: None,
             headers: None,
             timeout: None,
@@ -50,8 +50,8 @@ impl WebhookConfig {
     }
 
     /// Sets the HTTP method for the webhook request.
-    pub fn with_method(mut self, method: impl Into<String>) -> Self {
-        self.method = Some(method.into());
+    pub fn with_method(mut self, method: Method) -> Self {
+        self.method = method;
         self
     }
 
@@ -132,13 +132,6 @@ impl WebhookClient {
             headers.insert("Content-Type".to_string(), "application/json".to_string());
         }
 
-        let method = if let Some(m) = config.method {
-            Method::from_bytes(m.as_bytes())
-                .map_err(|e| OmnihookError::ConfigError(format!("Invalid HTTP method: {e}")))?
-        } else {
-            Method::POST
-        };
-
         if let Some(params) = &config.url_params
             && params.is_empty()
         {
@@ -151,7 +144,7 @@ impl WebhookClient {
             url: config.url,
             url_params: config.url_params,
             client: http_client,
-            method,
+            method: config.method,
             headers,
             secret: config.secret,
             timeout: config.timeout,
@@ -329,14 +322,14 @@ mod tests {
     fn test_webhook_config_builder() {
         let url = Url::parse("https://example.com").unwrap();
         let config = WebhookConfig::new(url.clone())
-            .with_method("PUT")
+            .with_method(Method::PUT)
             .with_secret("secret")
             .with_timeout(Duration::from_secs(5))
             .with_header("X-Test", "Value")
             .with_url_param("param", "val");
 
         assert_eq!(config.url, url);
-        assert_eq!(config.method, Some("PUT".to_string()));
+        assert_eq!(config.method, Method::PUT);
         assert_eq!(config.secret, Some("secret".to_string()));
         assert_eq!(config.timeout, Some(Duration::from_secs(5)));
         assert_eq!(
@@ -373,22 +366,6 @@ mod tests {
         let config = WebhookConfig::new(url);
         let client = config.build().unwrap();
         assert_eq!(client.url.as_str(), "https://example.com/");
-    }
-
-    #[test]
-    fn test_invalid_http_method() {
-        let http_client = create_test_http_client();
-        let config = WebhookConfig::new(Url::parse("https://example.com").unwrap())
-            .with_method("INVALID METHOD");
-
-        let result = WebhookClient::new(config, http_client);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Invalid HTTP method")
-        );
     }
 
     #[tokio::test]
