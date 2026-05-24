@@ -153,11 +153,19 @@ impl WebhookClient {
         })
     }
 
-    /// Signs a JSON payload with HMAC-SHA256 and returns `(hex_signature,
+    /// Computes an HMAC-SHA256 signature and returns `(hex_signature,
     /// timestamp_ms)`.
+    ///
+    /// The HMAC message is the raw `payload_bytes` followed immediately by the
+    /// decimal string representation of `timestamp`, with no delimiter between
+    /// them. In other words, the signed message is:
+    ///
+    /// `payload_bytes || timestamp.to_string().as_bytes()`
+    ///
+    /// The returned `timestamp_ms` value is that decimal timestamp string.
     pub fn sign_payload(
         secret: &str,
-        payload: &serde_json::Value,
+        payload_bytes: &[u8],
         timestamp: i64,
     ) -> Result<(String, String), OmnihookError> {
         if secret.is_empty() {
@@ -169,14 +177,14 @@ impl WebhookClient {
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
             .map_err(|e| OmnihookError::SigningError(format!("Invalid secret: {e}")))?;
 
-        let serialized_payload = serde_json::to_string(payload).map_err(|e| {
-            OmnihookError::SerializationError(format!("Failed to serialize payload: {e}"))
-        })?;
-        let message = format!("{serialized_payload}{timestamp}");
-        mac.update(message.as_bytes());
+        let timestamp_str = timestamp.to_string();
+
+        // The signature is computed over the payload bytes followed by the timestamp string.
+        mac.update(payload_bytes);
+        mac.update(timestamp_str.as_bytes());
 
         let signature = hex::encode(mac.finalize().into_bytes());
-        Ok((signature, timestamp.to_string()))
+        Ok((signature, timestamp_str))
     }
 
     /// Builds a payload using the given builder and sends it.
@@ -196,6 +204,11 @@ impl WebhookClient {
         payload: &serde_json::Value,
         idempotency_key: Option<&str>,
     ) -> Result<(), OmnihookError> {
+        // Serialize the payload to JSON bytes ONCE to ensure the same content is used for both the request body and signing.
+        let body_bytes = serde_json::to_vec(payload).map_err(|e| {
+            OmnihookError::SerializationError(format!("Failed to serialize payload: {e}"))
+        })?;
+
         // Sign the payload if a secret is configured
         let (signature, timestamp_str) = if let Some(secret) = &self.secret {
             let timestamp = SystemTime::now()
@@ -206,7 +219,7 @@ impl WebhookClient {
             let timestamp_i64 = i64::try_from(timestamp)
                 .map_err(|_| OmnihookError::SigningError("Timestamp overflow".to_string()))?;
 
-            let result = Self::sign_payload(secret, payload, timestamp_i64)?;
+            let result = Self::sign_payload(secret, &body_bytes, timestamp_i64)?;
             (Some(result.0), Some(result.1))
         } else {
             (None, None)
@@ -258,13 +271,14 @@ impl WebhookClient {
         let mut request = self
             .client
             .request(self.method.clone(), url)
-            .headers(headers);
+            .headers(headers)
+            .body(body_bytes);
 
         if let Some(timeout) = self.timeout {
             request = request.timeout(timeout);
         }
 
-        let response = request.json(payload).send().await?;
+        let response = request.send().await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -282,7 +296,6 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use mockito::{Matcher, Mock};
-    use serde_json::json;
 
     use super::*;
     use crate::{GenericWebhookPayloadBuilder, OmnihookError, WebhookPayloadBuilder};
@@ -316,10 +329,10 @@ mod tests {
 
     #[test]
     fn test_sign_payload_basic() {
-        let payload = json!({ "title": "Test Title", "body": "Test message" });
+        let payload_bytes = serde_json::to_vec(&create_test_payload()).unwrap();
         let timestamp = 123456789;
         let (signature, timestamp_str) =
-            WebhookClient::sign_payload("test-secret", &payload, timestamp).unwrap();
+            WebhookClient::sign_payload("test-secret", &payload_bytes, timestamp).unwrap();
         assert!(!signature.is_empty());
         assert_eq!(timestamp_str, "123456789");
     }
@@ -389,7 +402,7 @@ mod tests {
             .with_url_params(HashMap::from([("foo".to_string(), "bar".to_string())]));
 
         let client = WebhookClient::new(config, http_client).unwrap();
-        let result = client.notify_json(&json!({"test": "data"}), None).await;
+        let result = client.notify_json(&create_test_payload(), None).await;
 
         assert!(result.is_ok());
         mock.assert();
@@ -397,8 +410,8 @@ mod tests {
 
     #[test]
     fn test_sign_payload_error_on_empty_secret() {
-        let payload = json!({ "title": "Test Title", "body": "Test message" });
-        let error = WebhookClient::sign_payload("", &payload, 123).unwrap_err();
+        let payload_bytes = serde_json::to_vec(&create_test_payload()).unwrap();
+        let error = WebhookClient::sign_payload("", &payload_bytes, 123).unwrap_err();
         assert!(matches!(error, OmnihookError::SigningError(_)));
     }
 
@@ -487,8 +500,9 @@ mod tests {
     #[test]
     fn test_sign_payload_format() {
         let timestamp = 123456789;
+        let payload_bytes = serde_json::to_vec(&create_test_payload()).unwrap();
         let (signature, timestamp_str) =
-            WebhookClient::sign_payload("test-secret", &create_test_payload(), timestamp).unwrap();
+            WebhookClient::sign_payload("test-secret", &payload_bytes, timestamp).unwrap();
         assert!(
             hex::decode(&signature).is_ok(),
             "Signature should be valid hex"
