@@ -19,10 +19,6 @@ pub enum OmnihookError {
     #[error("Notification failed: {0}")]
     NotifyFailed(String),
 
-    /// An internal error that should not occur under normal circumstances.
-    #[error("Internal error: {0}")]
-    InternalError(String),
-
     /// An error from the underlying `reqwest` or `reqwest_middleware`
     /// libraries.
     #[error("Request error: {0}")]
