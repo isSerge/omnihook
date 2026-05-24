@@ -23,17 +23,17 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone, Debug)]
 pub struct WebhookConfig {
     /// The webhook URL to send requests to.
-    pub url: Url,
+    url: Url,
     /// Optional URL query parameters to include in the request.
-    pub url_params: Option<HashMap<String, String>>,
+    url_params: Option<HashMap<String, String>>,
     /// The HTTP method to use (default: POST).
-    pub method: Option<String>,
+    method: Option<String>,
     /// Optional secret for HMAC signing of the payload.
-    pub secret: Option<String>,
+    secret: Option<String>,
     /// Optional custom headers to include in the request.
-    pub headers: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
     /// Optional timeout for the HTTP request. If not set, the default timeout of the HTTP client will be used.
-    pub timeout: Option<Duration>,
+    timeout: Option<Duration>,
 }
 
 impl WebhookConfig {
