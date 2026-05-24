@@ -182,7 +182,7 @@ impl WebhookClient {
         &self,
         title: &str,
         body: &str,
-        builder: &impl WebhookPayloadBuilder,
+        builder: &dyn WebhookPayloadBuilder,
     ) -> Result<(), OmnihookError> {
         let payload = builder.build_payload(title, body);
         self.notify_json(&payload, None).await
