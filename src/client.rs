@@ -67,9 +67,10 @@ impl WebhookConfig {
         self
     }
 
-    /// Adds custom headers to the webhook request.
+    /// Adds multiple custom headers to the webhook request, merging with existing ones.
     pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
-        self.headers = Some(headers);
+        let current = self.headers.get_or_insert_with(HashMap::new);
+        current.extend(headers);
         self
     }
 
@@ -80,9 +81,10 @@ impl WebhookConfig {
         self
     }
 
-    /// Adds URL query parameters to the webhook request.
+    /// Adds multiple URL query parameters to the webhook request, merging with existing ones.
     pub fn with_url_params(mut self, params: HashMap<String, String>) -> Self {
-        self.url_params = Some(params);
+        let current = self.url_params.get_or_insert_with(HashMap::new);
+        current.extend(params);
         self
     }
 
@@ -351,9 +353,9 @@ mod tests {
         let url = Url::parse("https://example.com").unwrap();
         let config = WebhookConfig::new(url)
             .with_header("X-1", "V1")
-            .with_header("X-2", "V2")
+            .with_headers(HashMap::from([("X-2".to_string(), "V2".to_string())]))
             .with_url_param("p1", "v1")
-            .with_url_param("p2", "v2");
+            .with_url_params(HashMap::from([("p2".to_string(), "v2".to_string())]));
 
         let headers = config.headers.unwrap();
         assert_eq!(headers.get("X-1").unwrap(), "V1");
