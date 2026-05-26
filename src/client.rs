@@ -19,6 +19,10 @@ use crate::{error::OmnihookError, payload_builder::WebhookPayloadBuilder};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Maximum number of bytes captured from a non-2xx response body for error messages.
+/// Applies only when [`WebhookConfig::with_error_body`] is enabled.
+const MAX_ERROR_BODY: usize = 4096;
+
 /// Configuration for a webhook request.
 #[derive(Clone, Debug)]
 pub struct WebhookConfig {
@@ -34,6 +38,9 @@ pub struct WebhookConfig {
     headers: Option<HashMap<String, String>>,
     /// Optional timeout for the HTTP request. If not set, the default timeout of the HTTP client will be used.
     timeout: Option<Duration>,
+    /// Whether to include the response body in error messages.
+    /// Disabled by default to prevent accidentally logging sensitive data.
+    include_error_body: bool,
 }
 
 impl WebhookConfig {
@@ -46,6 +53,7 @@ impl WebhookConfig {
             secret: None,
             headers: None,
             timeout: None,
+            include_error_body: false,
         }
     }
 
@@ -64,6 +72,15 @@ impl WebhookConfig {
     /// Sets the timeout for the webhook request.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Controls whether the response body is included in error messages.
+    ///
+    /// Disabled by default. Only enable this if you trust the endpoint not to
+    /// return sensitive data (PII, secrets, internal traces) in error responses.
+    pub fn with_error_body(mut self, include: bool) -> Self {
+        self.include_error_body = include;
         self
     }
 
@@ -121,6 +138,7 @@ pub struct WebhookClient {
     secret: Option<String>,
     headers: HashMap<String, String>,
     timeout: Option<Duration>,
+    include_error_body: bool,
 }
 
 impl WebhookClient {
@@ -150,6 +168,7 @@ impl WebhookClient {
             headers,
             secret: config.secret,
             timeout: config.timeout,
+            include_error_body: config.include_error_body,
         })
     }
 
@@ -282,12 +301,66 @@ impl WebhookClient {
 
         let status = response.status();
         if !status.is_success() {
-            return Err(OmnihookError::NotifyFailed(format!(
-                "Webhook request failed with status: {status}"
-            )));
+            return Err(Self::error_from_response(response, self.include_error_body).await);
         }
 
         Ok(())
+    }
+
+    /// Extracted helper to safely parse error responses without memory exhaustion.
+    async fn error_from_response(
+        mut response: reqwest::Response,
+        include_body: bool,
+    ) -> OmnihookError {
+        let status = response.status();
+
+        if !include_body {
+            return OmnihookError::NotifyFailed(format!(
+                "Webhook request failed with status: {status}"
+            ));
+        }
+
+        // Read at most MAX_ERROR_BODY + 1 bytes. The extra byte acts as a
+        // truncation sentinel: if we collected more than MAX_ERROR_BODY, there
+        // was more data in the stream, so we mark the body as truncated.
+        // This avoids both the "exact fill" edge case and mixing suffix bytes
+        // into the body buffer.
+        let mut body_bytes = Vec::with_capacity(MAX_ERROR_BODY + 1);
+        let mut read_error: Option<String> = None;
+
+        while body_bytes.len() <= MAX_ERROR_BODY {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let space = (MAX_ERROR_BODY + 1).saturating_sub(body_bytes.len());
+                    body_bytes.extend_from_slice(&chunk[..chunk.len().min(space)]);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    read_error = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+
+        let truncated = body_bytes.len() > MAX_ERROR_BODY;
+        body_bytes.truncate(MAX_ERROR_BODY);
+
+        let body = match (body_bytes.is_empty(), read_error) {
+            (_, Some(e)) if body_bytes.is_empty() => format!("<failed to read response body: {e}>"),
+            (_, Some(e)) => format!("{} <read error: {e}>", String::from_utf8_lossy(&body_bytes)),
+            (true, None) => "No error body".to_string(),
+            (false, None) => {
+                let mut s = String::from_utf8_lossy(&body_bytes).to_string();
+                if truncated {
+                    s.push_str(" [truncated]");
+                }
+                s
+            }
+        };
+
+        OmnihookError::NotifyFailed(format!(
+            "Webhook request failed with status: {status}. Body: {body}"
+        ))
     }
 }
 
@@ -320,6 +393,12 @@ mod tests {
             config = config.with_headers(h);
         }
 
+        WebhookClient::new(config, http_client).unwrap()
+    }
+
+    fn create_test_action_with_error_body(url: &str) -> WebhookClient {
+        let http_client = create_test_http_client();
+        let config = WebhookConfig::new(Url::parse(url).unwrap()).with_error_body(true);
         WebhookClient::new(config, http_client).unwrap()
     }
 
@@ -472,6 +551,121 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Invalid header value"));
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_default_excludes_body() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(400)
+            .with_body("Sensitive internal details")
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, None);
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(msg.contains("400 Bad Request"));
+        assert!(!msg.contains("Sensitive internal details"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_includes_original_error_body() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(400)
+            .with_body("Invalid payload format")
+            .create_async()
+            .await;
+
+        let action = create_test_action_with_error_body(server.url().as_str());
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("400 Bad Request"));
+        assert!(err.to_string().contains("Invalid payload format"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_truncated() {
+        let mut server = mockito::Server::new_async().await;
+        // Large body - 5KB of 'A'
+        let large_body = "A".repeat(5120);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(large_body)
+            .create_async()
+            .await;
+
+        let action = create_test_action_with_error_body(server.url().as_str());
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("500 Internal Server Error"));
+        assert!(err_msg.contains("[truncated]"));
+        assert!(err_msg.len() < 5000);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_exactly_limited() {
+        let mut server = mockito::Server::new_async().await;
+        // Exactly MAX_ERROR_BODY bytes — should not be truncated.
+        let exact_body = "A".repeat(MAX_ERROR_BODY);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(exact_body)
+            .create_async()
+            .await;
+
+        let action = create_test_action_with_error_body(server.url().as_str());
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(!err_msg.contains("[truncated]"));
+        assert!(err_msg.contains("AAAA"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_limit_plus_one() {
+        let mut server = mockito::Server::new_async().await;
+        // One byte over the limit — should be truncated.
+        let body = "A".repeat(MAX_ERROR_BODY + 1);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let action = create_test_action_with_error_body(server.url().as_str());
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("[truncated]"));
+        mock.assert();
     }
 
     #[tokio::test]
