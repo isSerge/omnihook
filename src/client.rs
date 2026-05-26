@@ -282,8 +282,13 @@ impl WebhookClient {
 
         let status = response.status();
         if !status.is_success() {
+            // Get error context from the response body if possible
+            let error_body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(OmnihookError::NotifyFailed(format!(
-                "Webhook request failed with status: {status}"
+                "Webhook request failed with status: {status}. Body: {error_body}"
             )));
         }
 
@@ -472,6 +477,27 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Invalid header value"));
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_includes_original_error_body() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_status(400)
+            .with_body("Invalid payload format")
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, None);
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("400 Bad Request"));
+        assert!(err.to_string().contains("Invalid payload format"));
+        mock.assert();
     }
 
     #[tokio::test]
