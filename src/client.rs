@@ -282,17 +282,46 @@ impl WebhookClient {
 
         let status = response.status();
         if !status.is_success() {
-            // Get error context from the response body if possible
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(OmnihookError::NotifyFailed(format!(
-                "Webhook request failed with status: {status}. Body: {error_body}"
-            )));
+            return Err(Self::error_from_response(response).await);
         }
 
         Ok(())
+    }
+
+    /// Extracted helper to safely parse error responses without memory exhaustion.
+    async fn error_from_response(mut response: reqwest::Response) -> OmnihookError {
+        let status = response.status();
+        let mut body_bytes = Vec::new();
+        const MAX_ERROR_BODY: usize = 4096; // 4KB limit
+
+        while body_bytes.len() < MAX_ERROR_BODY {
+            match response.chunk().await {
+                Ok(Some(chunk)) => {
+                    let remaining = MAX_ERROR_BODY - body_bytes.len();
+                    if chunk.len() > remaining {
+                        body_bytes.extend_from_slice(&chunk[..remaining]);
+                        body_bytes.extend_from_slice(b" [truncated]");
+                        break;
+                    }
+                    body_bytes.extend_from_slice(&chunk);
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    body_bytes.extend_from_slice(b" [error reading body]");
+                    break;
+                }
+            }
+        }
+
+        let body = if body_bytes.is_empty() {
+            "No error body".to_string()
+        } else {
+            String::from_utf8_lossy(&body_bytes).to_string()
+        };
+
+        OmnihookError::NotifyFailed(format!(
+            "Webhook request failed with status: {status}. Body: {body}"
+        ))
     }
 }
 
@@ -497,6 +526,31 @@ mod tests {
 
         assert!(err.to_string().contains("400 Bad Request"));
         assert!(err.to_string().contains("Invalid payload format"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_truncated() {
+        let mut server = mockito::Server::new_async().await;
+        // Large body - 5KB of 'A'
+        let large_body = "A".repeat(5120);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(large_body)
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, None);
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("500 Internal Server Error"));
+        assert!(err_msg.contains("[truncated]"));
+        assert!(err_msg.len() < 5000);
         mock.assert();
     }
 
