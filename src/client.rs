@@ -291,33 +291,37 @@ impl WebhookClient {
     /// Extracted helper to safely parse error responses without memory exhaustion.
     async fn error_from_response(mut response: reqwest::Response) -> OmnihookError {
         let status = response.status();
-        let mut body_bytes = Vec::new();
-        const MAX_ERROR_BODY: usize = 4096; // 4KB limit
 
-        while body_bytes.len() < MAX_ERROR_BODY {
+        // Read at most MAX_ERROR_BODY + 1 bytes. The extra byte acts as a
+        // truncation sentinel: if we collected more than MAX_ERROR_BODY, there
+        // was more data in the stream, so we mark the body as truncated.
+        // This avoids both the "exact fill" edge case and mixing suffix bytes
+        // into the body buffer.
+        const MAX_ERROR_BODY: usize = 4096;
+        let mut body_bytes = Vec::with_capacity(MAX_ERROR_BODY + 1);
+
+        while body_bytes.len() <= MAX_ERROR_BODY {
             match response.chunk().await {
                 Ok(Some(chunk)) => {
-                    let remaining = MAX_ERROR_BODY - body_bytes.len();
-                    if chunk.len() > remaining {
-                        body_bytes.extend_from_slice(&chunk[..remaining]);
-                        body_bytes.extend_from_slice(b" [truncated]");
-                        break;
-                    }
-                    body_bytes.extend_from_slice(&chunk);
+                    let space = (MAX_ERROR_BODY + 1).saturating_sub(body_bytes.len());
+                    body_bytes.extend_from_slice(&chunk[..chunk.len().min(space)]);
                 }
-                Ok(None) => break,
-                Err(_) => {
-                    body_bytes.extend_from_slice(b" [error reading body]");
-                    break;
-                }
+                Ok(None) | Err(_) => break,
             }
         }
 
-        let body = if body_bytes.is_empty() {
+        let truncated = body_bytes.len() > MAX_ERROR_BODY;
+        body_bytes.truncate(MAX_ERROR_BODY);
+
+        let mut body = if body_bytes.is_empty() {
             "No error body".to_string()
         } else {
             String::from_utf8_lossy(&body_bytes).to_string()
         };
+
+        if truncated {
+            body.push_str(" [truncated]");
+        }
 
         OmnihookError::NotifyFailed(format!(
             "Webhook request failed with status: {status}. Body: {body}"
@@ -551,6 +555,53 @@ mod tests {
         assert!(err_msg.contains("500 Internal Server Error"));
         assert!(err_msg.contains("[truncated]"));
         assert!(err_msg.len() < 5000);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_exactly_limited() {
+        let mut server = mockito::Server::new_async().await;
+        // Exactly 4096 bytes
+        let exact_body = "A".repeat(4096);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(exact_body)
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, None);
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(!err_msg.contains("[truncated]"));
+        assert!(err_msg.contains("AAAA"));
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_notify_error_server_response_limit_plus_one() {
+        let mut server = mockito::Server::new_async().await;
+        // 4097 bytes
+        let body = "A".repeat(4097);
+        let mock = server
+            .mock("POST", "/")
+            .with_status(500)
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, None);
+        let err = action
+            .notify_json(&create_test_payload(), None)
+            .await
+            .unwrap_err();
+
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("[truncated]"));
         mock.assert();
     }
 
