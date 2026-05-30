@@ -88,18 +88,22 @@ impl WebhookConfig {
     pub fn with_headers<I, K, V>(mut self, headers: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
+        K: AsRef<str>,
+        V: AsRef<str>,
     {
         let current = self.headers.get_or_insert_with(HashMap::new);
-        current.extend(headers.into_iter().map(|(k, v)| (k.into(), v.into())));
+        current.extend(
+            headers
+                .into_iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string())),
+        );
         self
     }
 
     /// Adds a single custom header to the webhook request.
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_header(mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         let headers = self.headers.get_or_insert_with(HashMap::new);
-        headers.insert(key.into(), value.into());
+        headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }
 
@@ -107,18 +111,22 @@ impl WebhookConfig {
     pub fn with_url_params<I, K, V>(mut self, params: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
+        K: AsRef<str>,
+        V: AsRef<str>,
     {
         let current = self.url_params.get_or_insert_with(HashMap::new);
-        current.extend(params.into_iter().map(|(k, v)| (k.into(), v.into())));
+        current.extend(
+            params
+                .into_iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string())),
+        );
         self
     }
 
     /// Adds a single URL query parameter to the webhook request.
-    pub fn with_url_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_url_param(mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         let params = self.url_params.get_or_insert_with(HashMap::new);
-        params.insert(key.into(), value.into());
+        params.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }
 
