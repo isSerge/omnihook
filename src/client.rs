@@ -227,9 +227,10 @@ impl WebhookClient {
         title: &str,
         body: &str,
         builder: &B,
+        idempotency_key: Option<&str>,
     ) -> Result<(), OmnihookError> {
         let payload = builder.build_payload(title, body);
-        self.notify_json(&payload, None).await
+        self.notify_json(&payload, idempotency_key).await
     }
 
     /// Sends a JSON payload to the configured webhook URL.

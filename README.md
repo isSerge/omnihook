@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Send notification
     let builder = SlackPayloadBuilder::default();
-    client.notify("System Alert", "Database is down!", &builder).await?;
+    client.notify("System Alert", "Database is down!", &builder, Some("idempotency_key")).await?;
 
     Ok(())
 }
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = config.build()?;
     
     // This call will now automatically sign the payload
-    client.notify("Alert", "Something happened", &GenericWebhookPayloadBuilder::default()).await?;
+    client.notify("Alert", "Something happened", &GenericWebhookPayloadBuilder::default(), Some("idempotency_key")).await?;
 
     Ok(())
 }
