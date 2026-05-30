@@ -9,7 +9,7 @@ use std::{
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
     Client, Method,
-    header::{HeaderMap, HeaderName, HeaderValue},
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
 };
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use sha2::Sha256;
@@ -165,10 +165,7 @@ impl WebhookClient {
         config: WebhookConfig,
         http_client: Arc<ClientWithMiddleware>,
     ) -> Result<Self, OmnihookError> {
-        let mut headers = config.headers.unwrap_or_default();
-        if !headers.contains_key("Content-Type") {
-            headers.insert("Content-Type".to_string(), "application/json".to_string());
-        }
+        let headers = config.headers.unwrap_or_default();
 
         if let Some(params) = &config.url_params
             && params.is_empty()
@@ -297,6 +294,11 @@ impl WebhookClient {
             })?;
             headers.insert(header_name, header_value);
         }
+
+        // Apply default Content-Type if not already provided (case-insensitively)
+        headers
+            .entry(CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("application/json"));
 
         if let Some(key) = idempotency_key {
             let header_val = HeaderValue::from_str(key).map_err(|e| {
