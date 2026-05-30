@@ -711,6 +711,31 @@ mod tests {
         );
         mock.assert();
     }
+
+    #[tokio::test]
+    async fn test_notify_success_with_lowercase_content_type() {
+        let mut server = mockito::Server::new_async().await;
+        // User provides lowercase "content-type", which would previously collide with the default "Content-Type"
+        let headers = HashMap::from([(
+            "content-type".to_string(),
+            "application/json-patch+json".to_string(),
+        )]);
+
+        let mock = server
+            .mock("POST", "/")
+            // Verify that the user's value is used and not overwritten by the default
+            .match_header("content-type", "application/json-patch+json")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, Some(headers));
+        let result = action.notify_json(&create_test_payload(), None).await;
+
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
     #[test]
     fn test_sign_payload_format() {
         let timestamp = 123456789;
