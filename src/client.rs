@@ -85,30 +85,48 @@ impl WebhookConfig {
     }
 
     /// Adds multiple custom headers to the webhook request, merging with existing ones.
-    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+    pub fn with_headers<I, K, V>(mut self, headers: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
         let current = self.headers.get_or_insert_with(HashMap::new);
-        current.extend(headers);
+        current.extend(
+            headers
+                .into_iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string())),
+        );
         self
     }
 
     /// Adds a single custom header to the webhook request.
-    pub fn with_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_header(mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         let headers = self.headers.get_or_insert_with(HashMap::new);
-        headers.insert(key.into(), value.into());
+        headers.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }
 
     /// Adds multiple URL query parameters to the webhook request, merging with existing ones.
-    pub fn with_url_params(mut self, params: HashMap<String, String>) -> Self {
+    pub fn with_url_params<I, K, V>(mut self, params: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
         let current = self.url_params.get_or_insert_with(HashMap::new);
-        current.extend(params);
+        current.extend(
+            params
+                .into_iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string())),
+        );
         self
     }
 
     /// Adds a single URL query parameter to the webhook request.
-    pub fn with_url_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn with_url_param(mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         let params = self.url_params.get_or_insert_with(HashMap::new);
-        params.insert(key.into(), value.into());
+        params.insert(key.as_ref().to_string(), value.as_ref().to_string());
         self
     }
 
@@ -445,9 +463,9 @@ mod tests {
         let url = Url::parse("https://example.com").unwrap();
         let config = WebhookConfig::new(url)
             .with_header("X-1", "V1")
-            .with_headers(HashMap::from([("X-2".to_string(), "V2".to_string())]))
+            .with_headers([("X-2", "V2")])
             .with_url_param("p1", "v1")
-            .with_url_params(HashMap::from([("p2".to_string(), "v2".to_string())]));
+            .with_url_params([("p2", "v2")]);
 
         let headers = config.headers.unwrap();
         assert_eq!(headers.get("X-1").unwrap(), "V1");
