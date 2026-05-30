@@ -67,7 +67,7 @@ pub struct DiscordPayloadBuilder;
 
 impl WebhookPayloadBuilder for DiscordPayloadBuilder {
     fn build_payload(&self, title: &str, body: &str) -> serde_json::Value {
-        let full_message = format!("*{title}*\n\n{body}");
+        let full_message = format!("**{title}**\n\n{body}");
         json!({
             "content": full_message
         })
