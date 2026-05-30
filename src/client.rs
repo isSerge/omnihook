@@ -9,7 +9,7 @@ use std::{
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::{
     Client, Method,
-    header::{HeaderMap, HeaderName, HeaderValue},
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
 };
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use sha2::Sha256;
@@ -165,10 +165,7 @@ impl WebhookClient {
         config: WebhookConfig,
         http_client: Arc<ClientWithMiddleware>,
     ) -> Result<Self, OmnihookError> {
-        let mut headers = config.headers.unwrap_or_default();
-        if !headers.contains_key("Content-Type") {
-            headers.insert("Content-Type".to_string(), "application/json".to_string());
-        }
+        let headers = config.headers.unwrap_or_default();
 
         if let Some(params) = &config.url_params
             && params.is_empty()
@@ -297,6 +294,11 @@ impl WebhookClient {
             })?;
             headers.insert(header_name, header_value);
         }
+
+        // Apply default Content-Type if not already provided (case-insensitively)
+        headers
+            .entry(CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("application/json"));
 
         if let Some(key) = idempotency_key {
             let header_val = HeaderValue::from_str(key).map_err(|e| {
@@ -709,6 +711,31 @@ mod tests {
         );
         mock.assert();
     }
+
+    #[tokio::test]
+    async fn test_notify_success_with_lowercase_content_type() {
+        let mut server = mockito::Server::new_async().await;
+        // User provides lowercase "content-type", which would previously collide with the default "Content-Type"
+        let headers = HashMap::from([(
+            "content-type".to_string(),
+            "application/json-patch+json".to_string(),
+        )]);
+
+        let mock = server
+            .mock("POST", "/")
+            // Verify that the user's value is used and not overwritten by the default
+            .match_header("content-type", "application/json-patch+json")
+            .with_status(200)
+            .create_async()
+            .await;
+
+        let action = create_test_action(server.url().as_str(), None, Some(headers));
+        let result = action.notify_json(&create_test_payload(), None).await;
+
+        assert!(result.is_ok());
+        mock.assert();
+    }
+
     #[test]
     fn test_sign_payload_format() {
         let timestamp = 123456789;
