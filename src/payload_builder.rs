@@ -230,7 +230,7 @@ mod tests {
         let payload = DiscordPayloadBuilder.build_payload("Test Title", "Test Message");
         assert_eq!(
             payload,
-            json!({ "content": "*Test Title*\n\nTest Message" })
+            json!({ "content": "**Test Title**\n\nTest Message" })
         );
     }
 
