@@ -222,11 +222,11 @@ impl WebhookClient {
     }
 
     /// Builds a payload using the given builder and sends it.
-    pub async fn notify(
+    pub async fn notify<B: WebhookPayloadBuilder + ?Sized>(
         &self,
         title: &str,
         body: &str,
-        builder: &dyn WebhookPayloadBuilder,
+        builder: &B,
     ) -> Result<(), OmnihookError> {
         let payload = builder.build_payload(title, body);
         self.notify_json(&payload, None).await
